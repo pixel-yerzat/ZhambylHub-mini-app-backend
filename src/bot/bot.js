@@ -147,14 +147,28 @@ export function setupTelegramBot() {
     }
   });
 
-  // Launch bot gracefully
-  bot.launch()
-    .then(() => {
+  // Global bot error handler
+  bot.catch((err, ctx) => {
+    console.warn(`[TelegramBot] Error for update ${ctx?.updateType}:`, err.message);
+  });
+
+  // Launch bot gracefully with auto-retry for rolling deployment conflicts (409)
+  async function startBotWithRetry(retries = 6, delayMs = 5000) {
+    try {
+      await bot.launch({
+        dropPendingUpdates: true,
+      });
       console.log('🤖 Telegram Bot successfully started & listening for updates.');
-    })
-    .catch((err) => {
-      console.error('⚠️ Failed to launch Telegram Bot polling:', err.message);
-    });
+    } catch (err) {
+      console.warn(`⚠️ Telegram Bot launch: ${err.message}`);
+      if (err.message?.includes('409') && retries > 0) {
+        console.log(`[TelegramBot] Polling conflict (409) during deployment switch. Retrying in ${delayMs / 1000}s... (${retries} left)`);
+        setTimeout(() => startBotWithRetry(retries - 1, delayMs), delayMs);
+      }
+    }
+  }
+
+  startBotWithRetry();
 
   // Enable graceful stop
   process.once('SIGINT', () => bot.stop('SIGINT'));
