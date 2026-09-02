@@ -16,15 +16,20 @@ export function getGeminiClient() {
   return null;
 }
 
-export function getGeminiModel(modelName = config.gemini.model) {
+export function getGeminiModel(modelName = config.gemini.model || 'gemini-2.0-flash') {
   const ai = getGeminiClient();
   if (!ai) return null;
 
-  return ai.getGenerativeModel({
-    model: modelName,
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0.1, // Low temperature for consistent semantic verification
-    },
-  });
+  try {
+    return ai.getGenerativeModel({
+      model: modelName,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+      },
+    });
+  } catch (err) {
+    console.warn(`[GeminiConfig] Failed to init model ${modelName}:`, err.message);
+    return null;
+  }
 }

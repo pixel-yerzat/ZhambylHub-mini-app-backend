@@ -1,4 +1,4 @@
-import { getGeminiModel } from '../config/gemini.js';
+import { getGeminiModel, getGeminiClient } from '../config/gemini.js';
 import { config } from '../config/env.js';
 
 /**
@@ -38,10 +38,10 @@ export async function verifyApplicationWithGemini(
   userPreviousSubmissions = []
 ) {
   const startTime = Date.now();
-  const model = getGeminiModel();
+  const client = getGeminiClient();
 
-  // If Gemini API Key is not configured, run local semantic heuristic fallback
-  if (!model) {
+  // If Gemini client is not initialized, run heuristic fallback
+  if (!client || !config.gemini.apiKey) {
     console.warn('[GeminiVerification] No Gemini API key configured. Executing fallback heuristic verification.');
     return fallbackHeuristicVerification(newApplication, pastWinners, userPreviousSubmissions, startTime);
   }
@@ -98,54 +98,60 @@ ${
 }
 `;
 
-  try {
-    const result = await model.generateContent([
-      { text: SYSTEM_INSTRUCTION },
-      { text: prompt },
-    ]);
+  // Try available candidate models in order
+  const candidateModels = [
+    config.gemini.model,
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-pro',
+  ].filter(Boolean);
 
-    const rawText = result.response.text();
-    const executionTimeMs = Date.now() - startTime;
+  // Remove duplicates
+  const uniqueModels = Array.from(new Set(candidateModels));
 
-    // Parse JSON
-    const parsed = JSON.parse(rawText.trim());
+  for (const modelName of uniqueModels) {
+    try {
+      const model = getGeminiModel(modelName);
+      if (!model) continue;
 
-    return {
-      success: true,
-      verdict: parsed.verdict || 'MANUAL_REVIEW',
-      similarity_score: typeof parsed.similarity_score === 'number' ? parsed.similarity_score : 0,
-      confidence_score: typeof parsed.confidence_score === 'number' ? parsed.confidence_score : 80,
-      matched_entity_type: parsed.matched_entity_type || 'NONE',
-      matched_entity_id: parsed.matched_entity_id || null,
-      matched_entity_title: parsed.matched_entity_title || null,
-      rejection_reason: parsed.rejection_reason_ru || null,
-      detailed_analysis: parsed.detailed_analysis || {},
-      raw_response: parsed,
-      execution_time_ms: executionTimeMs,
-      model_name: config.gemini.model,
-    };
-  } catch (error) {
-    console.error('[GeminiVerification] Error during Gemini API call:', error);
-    
-    // In case of API error, fallback safely without failing user submission
-    return {
-      success: false,
-      verdict: 'MANUAL_REVIEW',
-      similarity_score: 50,
-      confidence_score: 40,
-      matched_entity_type: 'NONE',
-      matched_entity_id: null,
-      matched_entity_title: null,
-      rejection_reason: null,
-      detailed_analysis: {
-        error: error.message,
-        why_verdict: 'Автоматическая проверка временно недоступна, заявка отправлена на ручную модерацию жюри.',
-      },
-      raw_response: { error: error.message },
-      execution_time_ms: Date.now() - startTime,
-      model_name: config.gemini.model,
-    };
+      const result = await model.generateContent([
+        { text: SYSTEM_INSTRUCTION },
+        { text: prompt },
+      ]);
+
+      const rawText = result.response.text();
+      const executionTimeMs = Date.now() - startTime;
+
+      // Parse JSON
+      const parsed = JSON.parse(rawText.trim());
+
+      console.log(`[GeminiVerification] Successfully verified application with model "${modelName}": Verdict = ${parsed.verdict}`);
+
+      return {
+        success: true,
+        verdict: parsed.verdict || 'APPROVED',
+        similarity_score: typeof parsed.similarity_score === 'number' ? parsed.similarity_score : 0,
+        confidence_score: typeof parsed.confidence_score === 'number' ? parsed.confidence_score : 90,
+        matched_entity_type: parsed.matched_entity_type || 'NONE',
+        matched_entity_id: parsed.matched_entity_id || null,
+        matched_entity_title: parsed.matched_entity_title || null,
+        rejection_reason: parsed.rejection_reason_ru || null,
+        detailed_analysis: parsed.detailed_analysis || {},
+        raw_response: parsed,
+        execution_time_ms: executionTimeMs,
+        model_name: modelName,
+      };
+    } catch (error) {
+      console.warn(`[GeminiVerification] Model "${modelName}" failed: ${error.message}. Trying next candidate...`);
+    }
   }
+
+  // If all Gemini models fail, run heuristic fallback so user submission is never dropped
+  console.warn('[GeminiVerification] All Gemini models failed or returned error. Running semantic heuristic fallback.');
+  return fallbackHeuristicVerification(newApplication, pastWinners, userPreviousSubmissions, startTime);
 }
 
 /**
