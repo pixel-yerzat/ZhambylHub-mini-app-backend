@@ -1,5 +1,5 @@
-# Production Dockerfile for Railway / Container Environments
-FROM node:20-alpine AS base
+# Production Dockerfile for Railway / Container Environments (Node 22 LTS)
+FROM node:22-alpine AS base
 
 WORKDIR /app
 
