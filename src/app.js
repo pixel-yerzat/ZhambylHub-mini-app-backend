@@ -17,6 +17,9 @@ validateEnv();
 // 2. Initialize Express
 const app = express();
 
+// Enable trust proxy for Railway / Cloudflare / reverse proxy environments
+app.set('trust proxy', 1);
+
 // 3. Security and Utility Middlewares
 app.use(helmet());
 app.use(
