@@ -98,10 +98,11 @@ ${
 }
 `;
 
-  // Try available candidate models in order
+  // Try available candidate models in order of current availability
   const candidateModels = [
     config.gemini.model,
     'gemini-2.5-flash',
+    'gemini-3.6-flash',
     'gemini-2.0-flash',
     'gemini-1.5-flash-latest',
     'gemini-1.5-flash',
