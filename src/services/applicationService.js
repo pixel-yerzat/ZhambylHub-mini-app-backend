@@ -8,6 +8,49 @@ const memoryApplications = [];
 const memoryUsers = new Map();
 const memoryLogs = [];
 
+// Helper to insert into Supabase with automatic stripping of unknown columns
+async function insertIntoSupabaseWithRetry(supabase, table, payload, maxRetries = 10) {
+  let currentPayload = { ...payload };
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const { data, error } = await supabase.from(table).insert([currentPayload]).select().single();
+    if (!error) {
+      console.log(`✅ [Supabase] Inserted record into '${table}'! ID: ${data?.id}`);
+      return { data, error: null };
+    }
+
+    const match = error.message?.match(/Could not find the '([^']+)' column/);
+    if (match && match[1] && currentPayload.hasOwnProperty(match[1])) {
+      console.warn(`[Supabase] Column '${match[1]}' does not exist in '${table}'. Stripping column and retrying...`);
+      delete currentPayload[match[1]];
+      continue;
+    }
+
+    console.error(`[Supabase] ❌ Insert into '${table}' failed:`, error.message);
+    return { data: null, error };
+  }
+  return { data: null, error: new Error('Max retries exceeded') };
+}
+
+// Helper to upsert profile into Supabase with automatic stripping of unknown columns
+async function upsertProfileWithRetry(supabase, profileData, maxRetries = 5) {
+  let currentData = { ...profileData };
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const { data, error } = await supabase.from('profiles').upsert(currentData, { onConflict: 'id' }).select().single();
+    if (!error) return { data, error: null };
+
+    const match = error.message?.match(/Could not find the '([^']+)' column/);
+    if (match && match[1] && currentData.hasOwnProperty(match[1])) {
+      console.warn(`[Supabase] Column '${match[1]}' does not exist in 'profiles'. Stripping column and retrying...`);
+      delete currentData[match[1]];
+      continue;
+    }
+
+    console.warn(`[Supabase] Profile upsert warning:`, error.message);
+    return { data: null, error };
+  }
+  return { data: null, error: new Error('Max retries exceeded') };
+}
+
 export class ApplicationService {
   /**
    * Ensure user exists or update their profile in public.profiles.
@@ -33,12 +76,7 @@ export class ApplicationService {
 
     if (supabase) {
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .upsert(profileData, { onConflict: 'id' })
-          .select()
-          .single();
-
+        const { data, error } = await upsertProfileWithRetry(supabase, profileData);
         if (!error && data) return data;
       } catch (err) {
         console.warn('[ApplicationService] Supabase profile upsert error:', err.message);
@@ -203,26 +241,19 @@ export class ApplicationService {
     if (supabase) {
       try {
         // Step A: Ensure profile exists in public.profiles to satisfy Foreign Key constraint
-        const { error: profileError } = await supabase.from('profiles').upsert(
-          {
-            id: resolvedTelegramId,
-            first_name: founderName || 'Участник',
-            username: telegramUser.username || null,
-            phone: founderPhone || null,
-            role: 'founder',
-            role_title: 'Резидент Hub',
-            is_telegram: true,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'id' }
-        );
+        await upsertProfileWithRetry(supabase, {
+          id: resolvedTelegramId,
+          first_name: founderName || 'Участник',
+          username: telegramUser.username || null,
+          phone: founderPhone || null,
+          role: 'founder',
+          role_title: 'Резидент Hub',
+          is_telegram: true,
+          updated_at: new Date().toISOString(),
+        });
 
-        if (profileError) {
-          console.warn('[ApplicationService] Profile upsert warning:', profileError.message);
-        }
-
-        // Step B: Insert into public.projects
-        const basePayload = {
+        // Step B: Insert into public.projects with dynamic column stripping retry
+        const projectPayload = {
           name: newProject.name,
           category: newProject.category,
           tag: newProject.tag,
@@ -234,50 +265,22 @@ export class ApplicationService {
           founder_role: newProject.founder_role,
           team_members: newProject.team_members,
           demo_url: newProject.demo_url,
+          demo_link: newProject.demo_url,
           logo_icon: newProject.logo_icon,
           pdf_deck_url: newProject.pdf_deck_url,
           pdf_deck_name: newProject.pdf_deck_name,
           pdf_deck_size: newProject.pdf_deck_size,
           status: newProject.status,
+          rejection_reason: newProject.rejection_reason,
+          similarity_score: newProject.similarity_score,
+          matched_entity_title: newProject.matched_entity_title,
+          ai_analysis: newProject.ai_analysis,
           rating: 5.0,
           reviews_count: 1,
           metrics: newProject.metrics,
         };
 
-        // Try inserting with AI fields
-        let { data, error } = await supabase
-          .from('projects')
-          .insert([
-            {
-              ...basePayload,
-              rejection_reason: newProject.rejection_reason,
-              similarity_score: newProject.similarity_score,
-              matched_entity_title: newProject.matched_entity_title,
-              ai_analysis: newProject.ai_analysis,
-            },
-          ])
-          .select()
-          .single();
-
-        // If insert failed (e.g. columns don't exist yet in Supabase), try base columns
-        if (error) {
-          console.warn('[ApplicationService] Insert with AI columns failed (table might need column migration):', error.message);
-          const fallbackRes = await supabase
-            .from('projects')
-            .insert([basePayload])
-            .select()
-            .single();
-
-          if (fallbackRes.error) {
-            console.error('[ApplicationService] ❌ Supabase project insert error:', JSON.stringify(fallbackRes.error, null, 2));
-          } else {
-            data = fallbackRes.data;
-            error = null;
-            console.log('✅ Project saved to Supabase (base schema)! ID:', data?.id);
-          }
-        } else {
-          console.log('✅ Project saved to Supabase with AI verification fields! ID:', data?.id);
-        }
+        const { data, error } = await insertIntoSupabaseWithRetry(supabase, 'projects', projectPayload);
 
         if (!error && data) {
           savedProject = { ...newProject, ...data };
