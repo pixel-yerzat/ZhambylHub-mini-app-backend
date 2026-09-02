@@ -1,0 +1,33 @@
+{
+  "name": "endpoint-hub-telegram-mini-app",
+  "version": "1.0.0",
+  "description": "Backend verification service for Telegram Mini App Hub powered by Gemini AI and Supabase",
+  "main": "src/app.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "test:scenarios": "node tests/scenarios.test.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "@supabase/supabase-js": "^2.49.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "morgan": "^1.10.0",
+    "telegraf": "^4.16.3",
+    "zod": "^3.24.2"
+  },
+  "keywords": [
+    "telegram-mini-app",
+    "gemini-api",
+    "supabase",
+    "verification-service",
+    "hackathon-hub"
+  ],
+  "author": "",
+  "license": "MIT"
+}
