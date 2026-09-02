@@ -119,9 +119,19 @@ export class ApplicationService {
       'Участник Hub';
     const founderPhone = applicationData.founder_phone || applicationData.phone || null;
 
+    // Extract real Telegram User ID from pdf_deck_url if founder_id was a guest placeholder
+    let resolvedTelegramId = telegramIdStr;
+    if (resolvedTelegramId.startsWith('web_user_') && pdfDeckUrl) {
+      const match = pdfDeckUrl.match(/pitch_decks\/(\d+)\//);
+      if (match && match[1]) {
+        resolvedTelegramId = match[1];
+        console.log(`[ApplicationService] Extracted real Telegram ID ${resolvedTelegramId} from pdf_deck_url`);
+      }
+    }
+
     // 1. Fetch historical context for comparison:
     const pastWinners = await WinnerService.getAllWinners();
-    const userPreviousSubmissions = await this.getUserSubmissions(telegramIdStr);
+    const userPreviousSubmissions = await this.getUserSubmissions(resolvedTelegramId);
 
     // 2. Run Gemini Semantic Verification
     const aiResult = await verifyApplicationWithGemini(
@@ -153,7 +163,7 @@ export class ApplicationService {
       stage,
       short_desc: description,
       description: description,
-      founder_id: telegramIdStr,
+      founder_id: resolvedTelegramId,
       founder_name: founderName,
       founder_phone: founderPhone,
       founder_role: applicationData.founder_role || 'Founder & Team Lead',
@@ -192,41 +202,88 @@ export class ApplicationService {
 
     if (supabase) {
       try {
-        const { data, error } = await supabase
+        // Step A: Ensure profile exists in public.profiles to satisfy Foreign Key constraint
+        const { error: profileError } = await supabase.from('profiles').upsert(
+          {
+            id: resolvedTelegramId,
+            first_name: founderName || 'Участник',
+            username: telegramUser.username || null,
+            phone: founderPhone || null,
+            role: 'founder',
+            role_title: 'Резидент Hub',
+            is_telegram: true,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'id' }
+        );
+
+        if (profileError) {
+          console.warn('[ApplicationService] Profile upsert warning:', profileError.message);
+        }
+
+        // Step B: Insert into public.projects
+        const basePayload = {
+          name: newProject.name,
+          category: newProject.category,
+          tag: newProject.tag,
+          stage: newProject.stage,
+          short_desc: newProject.short_desc,
+          founder_id: newProject.founder_id,
+          founder_name: newProject.founder_name,
+          founder_phone: newProject.founder_phone,
+          founder_role: newProject.founder_role,
+          team_members: newProject.team_members,
+          demo_url: newProject.demo_url,
+          logo_icon: newProject.logo_icon,
+          pdf_deck_url: newProject.pdf_deck_url,
+          pdf_deck_name: newProject.pdf_deck_name,
+          pdf_deck_size: newProject.pdf_deck_size,
+          status: newProject.status,
+          rating: 5.0,
+          reviews_count: 1,
+          metrics: newProject.metrics,
+        };
+
+        // Try inserting with AI fields
+        let { data, error } = await supabase
           .from('projects')
           .insert([
             {
-              name: newProject.name,
-              category: newProject.category,
-              tag: newProject.tag,
-              stage: newProject.stage,
-              short_desc: newProject.short_desc,
-              founder_id: newProject.founder_id,
-              founder_name: newProject.founder_name,
-              founder_phone: newProject.founder_phone,
-              founder_role: newProject.founder_role,
-              team_members: newProject.team_members,
-              demo_url: newProject.demo_url,
-              logo_icon: newProject.logo_icon,
-              pdf_deck_url: newProject.pdf_deck_url,
-              pdf_deck_name: newProject.pdf_deck_name,
-              pdf_deck_size: newProject.pdf_deck_size,
-              status: newProject.status,
+              ...basePayload,
               rejection_reason: newProject.rejection_reason,
               similarity_score: newProject.similarity_score,
               matched_entity_title: newProject.matched_entity_title,
               ai_analysis: newProject.ai_analysis,
-              metrics: newProject.metrics,
             },
           ])
           .select()
           .single();
 
+        // If insert failed (e.g. columns don't exist yet in Supabase), try base columns
+        if (error) {
+          console.warn('[ApplicationService] Insert with AI columns failed (table might need column migration):', error.message);
+          const fallbackRes = await supabase
+            .from('projects')
+            .insert([basePayload])
+            .select()
+            .single();
+
+          if (fallbackRes.error) {
+            console.error('[ApplicationService] ❌ Supabase project insert error:', JSON.stringify(fallbackRes.error, null, 2));
+          } else {
+            data = fallbackRes.data;
+            error = null;
+            console.log('✅ Project saved to Supabase (base schema)! ID:', data?.id);
+          }
+        } else {
+          console.log('✅ Project saved to Supabase with AI verification fields! ID:', data?.id);
+        }
+
         if (!error && data) {
           savedProject = { ...newProject, ...data };
         }
       } catch (err) {
-        console.warn('[ApplicationService] Supabase project insert error:', err.message);
+        console.error('[ApplicationService] ❌ Supabase project insert unexpected error:', err.message);
       }
     }
 
