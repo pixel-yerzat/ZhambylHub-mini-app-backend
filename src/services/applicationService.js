@@ -8,9 +8,11 @@ const memoryApplications = [];
 const memoryUsers = new Map();
 const memoryLogs = [];
 
-// Helper to insert into Supabase with automatic stripping of unknown columns
-async function insertIntoSupabaseWithRetry(supabase, table, payload, maxRetries = 10) {
+// Helper to insert into Supabase with automatic stripping of unknown columns and handling of NOT NULL constraints
+async function insertIntoSupabaseWithRetry(supabase, table, payload, maxRetries = 15) {
   let currentPayload = { ...payload };
+  const nullFallbackColumns = new Set();
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const { data, error } = await supabase.from(table).insert([currentPayload]).select().single();
     if (!error) {
@@ -18,11 +20,31 @@ async function insertIntoSupabaseWithRetry(supabase, table, payload, maxRetries 
       return { data, error: null };
     }
 
-    const match = error.message?.match(/Could not find the '([^']+)' column/);
-    if (match && match[1] && currentPayload.hasOwnProperty(match[1])) {
-      console.warn(`[Supabase] Column '${match[1]}' does not exist in '${table}'. Stripping column and retrying...`);
-      delete currentPayload[match[1]];
+    // 1. Column doesn't exist in Supabase table schema -> strip it and retry
+    const missingColMatch =
+      error.message?.match(/Could not find the '([^']+)' column/i) ||
+      error.message?.match(/column "([^"]+)" of relation "[^"]+" does not exist/i) ||
+      error.message?.match(/column "([^"]+)" does not exist/i);
+
+    if (missingColMatch && missingColMatch[1] && currentPayload.hasOwnProperty(missingColMatch[1])) {
+      console.warn(`[Supabase] Column '${missingColMatch[1]}' does not exist in '${table}'. Stripping column and retrying...`);
+      delete currentPayload[missingColMatch[1]];
       continue;
+    }
+
+    // 2. Column violates NOT NULL constraint -> supply safe empty default and retry
+    const notNullMatch =
+      error.message?.match(/null value in column "([^"]+)"/i) ||
+      error.message?.match(/column "([^"]+)" violates not-null constraint/i);
+
+    if (notNullMatch && notNullMatch[1]) {
+      const col = notNullMatch[1];
+      if (!nullFallbackColumns.has(col)) {
+        nullFallbackColumns.add(col);
+        console.warn(`[Supabase] Column '${col}' has NOT NULL constraint in '${table}'. Supplying fallback empty value and retrying...`);
+        currentPayload[col] = '';
+        continue;
+      }
     }
 
     console.error(`[Supabase] ❌ Insert into '${table}' failed:`, error.message);
@@ -31,18 +53,40 @@ async function insertIntoSupabaseWithRetry(supabase, table, payload, maxRetries 
   return { data: null, error: new Error('Max retries exceeded') };
 }
 
-// Helper to upsert profile into Supabase with automatic stripping of unknown columns
-async function upsertProfileWithRetry(supabase, profileData, maxRetries = 5) {
+// Helper to upsert profile into Supabase with automatic stripping of unknown columns and NOT NULL handling
+async function upsertProfileWithRetry(supabase, profileData, maxRetries = 10) {
   let currentData = { ...profileData };
+  const nullFallbackColumns = new Set();
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const { data, error } = await supabase.from('profiles').upsert(currentData, { onConflict: 'id' }).select().single();
     if (!error) return { data, error: null };
 
-    const match = error.message?.match(/Could not find the '([^']+)' column/);
-    if (match && match[1] && currentData.hasOwnProperty(match[1])) {
-      console.warn(`[Supabase] Column '${match[1]}' does not exist in 'profiles'. Stripping column and retrying...`);
-      delete currentData[match[1]];
+    // 1. Column doesn't exist -> strip and retry
+    const missingColMatch =
+      error.message?.match(/Could not find the '([^']+)' column/i) ||
+      error.message?.match(/column "([^"]+)" of relation "[^"]+" does not exist/i) ||
+      error.message?.match(/column "([^"]+)" does not exist/i);
+
+    if (missingColMatch && missingColMatch[1] && currentData.hasOwnProperty(missingColMatch[1])) {
+      console.warn(`[Supabase] Column '${missingColMatch[1]}' does not exist in 'profiles'. Stripping column and retrying...`);
+      delete currentData[missingColMatch[1]];
       continue;
+    }
+
+    // 2. Column violates NOT NULL constraint -> supply safe fallback and retry
+    const notNullMatch =
+      error.message?.match(/null value in column "([^"]+)"/i) ||
+      error.message?.match(/column "([^"]+)" violates not-null constraint/i);
+
+    if (notNullMatch && notNullMatch[1]) {
+      const col = notNullMatch[1];
+      if (!nullFallbackColumns.has(col)) {
+        nullFallbackColumns.add(col);
+        console.warn(`[Supabase] Column '${col}' has NOT NULL constraint in 'profiles'. Supplying fallback and retrying...`);
+        currentData[col] = '';
+        continue;
+      }
     }
 
     console.warn(`[Supabase] Profile upsert warning:`, error.message);
@@ -192,6 +236,11 @@ export class ApplicationService {
     else if (aiResult.verdict === 'MANUAL_REVIEW') status = 'manual_review';
 
     // 3. Construct project record for public.projects
+    const safePdfDeckUrl = pdfDeckUrl || '';
+    const safeDemoUrl = demoUrl || '';
+    const safeFounderPhone = founderPhone || '';
+    const safeTeamMembers = teamMembers || '';
+
     const newProject = {
       id: `proj-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       name: title,
@@ -203,31 +252,31 @@ export class ApplicationService {
       description: description,
       founder_id: resolvedTelegramId,
       founder_name: founderName,
-      founder_phone: founderPhone,
+      founder_phone: safeFounderPhone,
       founder_role: applicationData.founder_role || 'Founder & Team Lead',
-      team_members: teamMembers,
-      demo_url: demoUrl,
-      demo_link: demoUrl,
+      team_members: safeTeamMembers,
+      demo_url: safeDemoUrl,
+      demo_link: safeDemoUrl,
       logo_icon: applicationData.logo_icon || '🚀',
-      pdf_deck_url: pdfDeckUrl,
+      pdf_deck_url: safePdfDeckUrl,
       pdf_deck_name: applicationData.pdf_deck_name || 'pitch_deck.pdf',
       pdf_deck_size: applicationData.pdf_deck_size || '2.4 MB',
       
       // Verification fields
       status: status,
       verdict: aiResult.verdict,
-      rejection_reason: aiResult.rejection_reason,
-      similarity_score: aiResult.similarity_score,
-      matched_entity_type: aiResult.matched_entity_type,
-      matched_entity_id: aiResult.matched_entity_id,
-      matched_entity_title: aiResult.matched_entity_title,
+      rejection_reason: aiResult.rejection_reason || '',
+      similarity_score: Number(aiResult.similarity_score) || 0,
+      matched_entity_type: aiResult.matched_entity_type || '',
+      matched_entity_id: aiResult.matched_entity_id || '',
+      matched_entity_title: aiResult.matched_entity_title || '',
       ai_analysis: aiResult,
       
       rating: 5.0,
       reviews_count: 1,
       metrics: [
         { label: 'Статус', value: status === 'approved' ? 'Одобрен' : 'На модерации' },
-        { label: 'Питч-дек', value: pdfDeckUrl ? 'PDF загружен' : 'Без PDF' },
+        { label: 'Питч-дек', value: safePdfDeckUrl ? 'PDF загружен' : 'Без PDF' },
         { label: 'Питч', value: 'Готов к защите' },
       ],
       created_at: new Date().toISOString(),
@@ -245,7 +294,7 @@ export class ApplicationService {
           id: resolvedTelegramId,
           first_name: founderName || 'Участник',
           username: telegramUser.username || null,
-          phone: founderPhone || null,
+          phone: safeFounderPhone || null,
           role: 'founder',
           role_title: 'Резидент Hub',
           is_telegram: true,
@@ -261,13 +310,13 @@ export class ApplicationService {
           short_desc: newProject.short_desc,
           founder_id: newProject.founder_id,
           founder_name: newProject.founder_name,
-          founder_phone: newProject.founder_phone,
+          founder_phone: safeFounderPhone,
           founder_role: newProject.founder_role,
-          team_members: newProject.team_members,
-          demo_url: newProject.demo_url,
-          demo_link: newProject.demo_url,
+          team_members: safeTeamMembers,
+          demo_url: safeDemoUrl,
+          demo_link: safeDemoUrl,
           logo_icon: newProject.logo_icon,
-          pdf_deck_url: newProject.pdf_deck_url,
+          pdf_deck_url: safePdfDeckUrl,
           pdf_deck_name: newProject.pdf_deck_name,
           pdf_deck_size: newProject.pdf_deck_size,
           status: newProject.status,
@@ -301,17 +350,17 @@ export class ApplicationService {
             event_title: applicationData.event_title || 'Хакатон Zhambyl Hub',
             user_id: telegramIdStr,
             attendee_name: founderName,
-            attendee_phone: founderPhone || '77000000000',
+            attendee_phone: safeFounderPhone || '77000000000',
             telegram_username: telegramUser.username || null,
             registration_type: 'pitch_project',
             project_id: savedProject.id,
             project_name: newProject.name,
             project_desc: newProject.short_desc,
-            team_members: teamMembers,
-            pdf_deck_url: pdfDeckUrl,
+            team_members: safeTeamMembers,
+            pdf_deck_url: safePdfDeckUrl,
             project_stage: stage,
             project_category: category,
-            demo_or_github_url: demoUrl,
+            demo_or_github_url: safeDemoUrl,
             status: 'confirmed',
           },
         ]);
@@ -358,14 +407,14 @@ export class ApplicationService {
   }
 
   /**
-   * Get application by ID.
+   * Get application / project by ID.
    */
   static async getApplicationById(id) {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
         const { data, error } = await supabase
-          .from('applications')
+          .from('projects')
           .select('*')
           .eq('id', id)
           .single();
@@ -382,7 +431,7 @@ export class ApplicationService {
    * Admin manual status override (Approve / Reject).
    */
   static async updateApplicationStatus(id, newStatus, adminTelegramId, notes = '') {
-    const validStatuses = ['APPROVED', 'REJECTED_DUPLICATE', 'REJECTED_PAST_WINNER', 'MANUAL_REVIEW'];
+    const validStatuses = ['APPROVED', 'REJECTED_DUPLICATE', 'REJECTED_PAST_WINNER', 'MANUAL_REVIEW', 'approved', 'rejected_duplicate', 'rejected_past_winner', 'manual_review'];
     if (!validStatuses.includes(newStatus)) {
       throw new Error(`Invalid status: ${newStatus}`);
     }
@@ -401,7 +450,7 @@ export class ApplicationService {
     if (supabase) {
       try {
         const { data, error } = await supabase
-          .from('applications')
+          .from('projects')
           .update(updatePayload)
           .eq('id', id)
           .select()
@@ -433,14 +482,14 @@ export class ApplicationService {
   }
 
   /**
-   * List all applications with filtering for admin dashboard.
+   * List all applications / projects with filtering for admin dashboard.
    */
   static async listApplications(filter = {}) {
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        let query = supabase.from('applications').select('*').order('created_at', { ascending: false });
-        if (filter.status) query = query.eq('status', filter.status);
+        let query = supabase.from('projects').select('*').order('created_at', { ascending: false });
+        if (filter.status) query = query.eq('status', filter.status.toLowerCase());
         if (filter.category) query = query.eq('category', filter.category);
         const { data, error } = await query;
         if (!error && data) return data;
@@ -450,7 +499,7 @@ export class ApplicationService {
     }
 
     return memoryApplications.filter((app) => {
-      if (filter.status && app.status !== filter.status) return false;
+      if (filter.status && app.status?.toLowerCase() !== filter.status?.toLowerCase()) return false;
       if (filter.category && app.category !== filter.category) return false;
       return true;
     });

@@ -29,14 +29,14 @@ export async function sendApplicationStatusNotification(telegramId, application)
 
   try {
     let message = '';
-    const title = application.title;
-    const status = application.status;
+    const title = application.title || application.name || 'Проект';
+    const status = String(application.status || application.verdict || '').toUpperCase();
 
     switch (status) {
       case 'APPROVED':
         message = `✅ <b>Заявка одобрена!</b>\n\n` +
           `📌 <b>Проект:</b> <i>${title}</i>\n` +
-          `🏷 <b>Категория:</b> ${application.category}\n\n` +
+          `🏷 <b>Категория:</b> ${application.category || 'AI & IT Solutions'}\n\n` +
           `🎉 Ваш проект успешно прошел автоматическую проверку на оригинальность и допущен к участию в Хабе!\n` +
           `Удачи на мероприятии! 🚀`;
         break;
@@ -62,7 +62,7 @@ export async function sendApplicationStatusNotification(telegramId, application)
         break;
 
       default:
-        message = `ℹ️ <b>Статус заявки "${title}":</b> ${status}`;
+        message = `ℹ️ <b>Статус заявки "${title}":</b> ${application.status || status}`;
     }
 
     const keyboard = config.telegram.webAppUrl

@@ -72,22 +72,23 @@ export function setupTelegramBot() {
     applications.forEach((app, idx) => {
       let statusIcon = '⏳';
       let statusLabel = 'На проверке';
+      const statusUpper = String(app.status || app.verdict || '').toUpperCase();
 
-      if (app.status === 'APPROVED') {
+      if (statusUpper === 'APPROVED') {
         statusIcon = '✅';
         statusLabel = 'Одобрен';
-      } else if (app.status === 'REJECTED_DUPLICATE') {
+      } else if (statusUpper === 'REJECTED_DUPLICATE') {
         statusIcon = '⚠️';
         statusLabel = 'Отклонен (Дубликат)';
-      } else if (app.status === 'REJECTED_PAST_WINNER') {
+      } else if (statusUpper === 'REJECTED_PAST_WINNER') {
         statusIcon = '⛔️';
         statusLabel = 'Отклонен (Победитель прошлого хакатона)';
-      } else if (app.status === 'MANUAL_REVIEW') {
+      } else if (statusUpper === 'MANUAL_REVIEW') {
         statusIcon = '🔍';
         statusLabel = 'На ручном рассмотрении жюри';
       }
 
-      text += `${idx + 1}. ${statusIcon} <b>${app.title}</b>\n`;
+      text += `${idx + 1}. ${statusIcon} <b>${app.title || app.name}</b>\n`;
       text += `   🏷 <i>Категория:</i> ${app.category}\n`;
       text += `   📊 <i>Статус:</i> ${statusLabel}\n`;
       if (app.rejection_reason) {
@@ -107,7 +108,7 @@ export function setupTelegramBot() {
     try {
       const updated = await ApplicationService.updateApplicationStatus(
         applicationId,
-        'APPROVED',
+        'approved',
         ctx.from.id,
         `Одобрено вручную админом ${adminUser}`
       );
@@ -131,7 +132,7 @@ export function setupTelegramBot() {
     try {
       const updated = await ApplicationService.updateApplicationStatus(
         applicationId,
-        'REJECTED_DUPLICATE',
+        'rejected_duplicate',
         ctx.from.id,
         `Отклонено вручную админом ${adminUser}`
       );
@@ -153,8 +154,10 @@ export function setupTelegramBot() {
   });
 
   // Launch bot gracefully with auto-retry for rolling deployment conflicts (409)
-  async function startBotWithRetry(retries = 6, delayMs = 5000) {
+  async function startBotWithRetry(retries = 8, delayMs = 4000) {
     try {
+      // Clear any existing webhook before polling to avoid 409 conflict
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
       await bot.launch({
         dropPendingUpdates: true,
       });

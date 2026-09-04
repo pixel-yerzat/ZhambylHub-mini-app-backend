@@ -249,3 +249,45 @@ CREATE TRIGGER update_winning_projects_modtime
     BEFORE UPDATE ON public.winning_projects
     FOR EACH ROW
     EXECUTE FUNCTION update_modified_column();
+
+-- ====================================================================
+-- SAFE IDEMPOTENT MIGRATIONS & SCHEMA SYNCHRONIZATION
+-- Safe to run on existing databases to add missing columns & fix constraints
+-- ====================================================================
+
+-- 1. Profiles Table Migrations
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS role_title TEXT DEFAULT 'Резидент Hub';
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS skills_or_interest TEXT;
+
+-- 2. Projects Table Migrations
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS demo_link TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS demo_url TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS founder_phone TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS team_members TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS pdf_deck_url TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS pdf_deck_name TEXT DEFAULT 'pitch_deck.pdf';
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS pdf_deck_size TEXT DEFAULT '2.4 MB';
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS logo_icon TEXT DEFAULT '🚀';
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS similarity_score NUMERIC(5, 2) DEFAULT 0.00;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS matched_entity_title TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS ai_analysis JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS metrics JSONB DEFAULT '[]'::jsonb;
+
+-- 3. Ensure pdf_deck_url and other optional columns are NULLABLE
+DO $$
+BEGIN
+  ALTER TABLE public.projects ALTER COLUMN pdf_deck_url DROP NOT NULL;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER TABLE public.projects ALTER COLUMN demo_url DROP NOT NULL;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END $$;
+
