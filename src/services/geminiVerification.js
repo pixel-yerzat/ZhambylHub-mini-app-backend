@@ -126,8 +126,22 @@ ${
       const rawText = result.response.text();
       const executionTimeMs = Date.now() - startTime;
 
-      // Parse JSON
-      const parsed = JSON.parse(rawText.trim());
+      // Robust JSON extraction and parsing
+      let cleanedJson = rawText.trim()
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+
+      // If text still contains markdown wrapping or surrounding text, extract matching JSON block
+      if (!cleanedJson.startsWith('{')) {
+        const jsonMatch = cleanedJson.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          cleanedJson = jsonMatch[0];
+        }
+      }
+
+      const parsed = JSON.parse(cleanedJson);
 
       console.log(`[GeminiVerification] Successfully verified application with model "${modelName}": Verdict = ${parsed.verdict}`);
 

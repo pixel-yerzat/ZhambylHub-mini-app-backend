@@ -344,16 +344,19 @@ export class ApplicationService {
     // 5. Optional Event Registration linking if event_id is supplied
     if (applicationData.event_id && supabase) {
       try {
+        const isValidEventUuid = String(applicationData.event_id).length === 36;
+        const isValidProjectUuid = savedProject.id && String(savedProject.id).length === 36;
+
         await supabase.from('event_registrations').insert([
           {
-            event_id: applicationData.event_id,
+            event_id: isValidEventUuid ? applicationData.event_id : null,
             event_title: applicationData.event_title || 'Хакатон Zhambyl Hub',
             user_id: telegramIdStr,
             attendee_name: founderName,
             attendee_phone: safeFounderPhone || '77000000000',
             telegram_username: telegramUser.username || null,
             registration_type: 'pitch_project',
-            project_id: savedProject.id,
+            project_id: isValidProjectUuid ? savedProject.id : null,
             project_name: newProject.name,
             project_desc: newProject.short_desc,
             team_members: safeTeamMembers,
@@ -385,7 +388,18 @@ export class ApplicationService {
 
     if (supabase) {
       try {
-        await supabase.from('verification_logs').insert([auditLog]);
+        const isValidProjectUuid = savedProject.id && String(savedProject.id).length === 36;
+        const supabaseLogPayload = {
+          project_id: isValidProjectUuid ? savedProject.id : null,
+          telegram_id: telegramIdStr,
+          model_name: aiResult.model_name,
+          verdict: aiResult.verdict,
+          similarity_score: aiResult.similarity_score,
+          confidence_score: aiResult.confidence_score,
+          raw_response: aiResult.raw_response,
+          execution_time_ms: aiResult.execution_time_ms,
+        };
+        await supabase.from('verification_logs').insert([supabaseLogPayload]);
       } catch (err) {
         console.warn('[ApplicationService] Supabase log insert error:', err.message);
       }
