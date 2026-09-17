@@ -11,6 +11,8 @@ import winnerRoutes from './routes/winnerRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import { setupTelegramBot } from './bot/bot.js';
 
+import { getSupabaseClient } from './config/supabase.js';
+
 // 1. Validate environment
 validateEnv();
 
@@ -22,9 +24,20 @@ app.set('trust proxy', 1);
 
 // 3. Security and Utility Middlewares
 app.use(helmet());
+
+const allowedOrigins = config.corsOrigin && config.corsOrigin !== '*'
+  ? config.corsOrigin.split(',').map((s) => s.trim()).filter(Boolean)
+  : ['*'];
+
 app.use(
   cors({
-    origin: config.corsOrigin === '*' ? true : config.corsOrigin.split(','),
+    origin: (origin, callback) => {
+      // Allow non-browser requests (e.g. mobile apps, curl, server-to-server)
+      if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`Origin ${origin} is not permitted by CORS policy`));
+    },
     credentials: true,
   })
 );
@@ -57,12 +70,40 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
+// Detailed multi-service readiness check
+app.get('/health', async (req, res) => {
+  const supabase = getSupabaseClient();
+  const dbConfigured = Boolean(config.supabase.url && (config.supabase.serviceKey || config.supabase.anonKey));
+  const geminiConfigured = Boolean(config.gemini.apiKey);
+  const telegramConfigured = Boolean(config.telegram.botToken);
+
+  let dbStatus = 'unconfigured';
+  if (dbConfigured && supabase) {
+    try {
+      const { error } = await supabase.from('projects').select('id').limit(1);
+      dbStatus = error ? 'degraded' : 'healthy';
+    } catch {
+      dbStatus = 'unreachable';
+    }
+  }
+
+  const isHealthy = dbStatus === 'healthy' || dbStatus === 'degraded' || config.isDev;
+
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    services: {
+      database: dbStatus,
+      gemini: geminiConfigured ? 'healthy' : 'unconfigured',
+      telegram: telegramConfigured ? 'healthy' : 'unconfigured',
+    },
   });
+});
+
+// Simple liveness endpoint
+app.get('/ready', (req, res) => {
+  res.json({ ready: true, uptime: process.uptime() });
 });
 
 // 6. Mount API Routes

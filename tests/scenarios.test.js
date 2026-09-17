@@ -228,9 +228,52 @@ async function runAllScenarios() {
     adminResponse?.error
   );
 
+  // ----------------------------------------------------
+  // TEST 8: Admin Controller: Authorized via x-admin-secret-key header
+  // ----------------------------------------------------
+  console.log(`\n${colors.bold}👉 Тест 8: Авторизация через x-admin-secret-key предоставляет доступ администратора${colors.reset}`);
+  config.adminSecretKey = 'super_secret_admin_test_token_2026';
+
+  const mockSecretKeyReq = {
+    headers: { 'x-admin-secret-key': 'super_secret_admin_test_token_2026' },
+    query: {},
+  };
+
+  let secretKeyAuthPassed = false;
+  await AdminController.listApplications(mockSecretKeyReq, mockAdminRes, (err) => {
+    if (err && (err.message.includes('Database service is not configured') || err.message.includes('Failed to fetch'))) {
+      secretKeyAuthPassed = true;
+    }
+  });
+
+  assert(secretKeyAuthPassed === true, 'Запрос с валидным x-admin-secret-key успешно прошел авторизацию', true, secretKeyAuthPassed);
+
+  // ----------------------------------------------------
+  // TEST 9: requireAdmin Middleware: Rejects request with invalid or missing credentials (401 / 403)
+  // ----------------------------------------------------
+  console.log(`\n${colors.bold}👉 Тест 9: requireAdmin middleware отклоняет запросы без прав (401 / 403)${colors.reset}`);
+  const { requireAdmin } = await import('../src/middleware/adminAuth.js');
+
+  let requireAdminStatus = null;
+  let requireAdminResponse = null;
+  const mockRequireAdminRes = {
+    status(code) {
+      requireAdminStatus = code;
+      return {
+        json(data) {
+          requireAdminResponse = data;
+        },
+      };
+    },
+  };
+
+  await requireAdmin({ headers: {} }, mockRequireAdminRes, () => {});
+  assert(requireAdminStatus === 401, 'requireAdmin отклоняет запрос без Telegram user и без ключа с кодом 401', 401, requireAdminStatus);
+
   // Restore configs
   config.telegram.botToken = originalToken;
   config.telegram.adminChatId = originalAdminId;
+  config.adminSecretKey = '';
 
   console.log(`\n${colors.bold}${colors.green}===================================================================${colors.reset}`);
   console.log(`${colors.bold}${colors.green}🎉 ВСЕ СТРОГИЕ ПРОВЕРКИ И ТЕСТЫ БЕЗ МОКОВ УСПЕШНО ПРОЙДЕНЫ! 🎉${colors.reset}`);

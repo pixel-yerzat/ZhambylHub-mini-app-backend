@@ -189,21 +189,49 @@ export class ApplicationService {
     const founderPhone = applicationData.founder_phone || applicationData.phone || null;
 
     // 1. Fetch historical context for comparison from database
-    const pastWinners = await WinnerService.getAllWinners();
-    const userPreviousSubmissions = await this.getUserSubmissions(telegramIdStr);
+    let pastWinners = [];
+    try {
+      pastWinners = await WinnerService.getAllWinners();
+    } catch (err) {
+      console.warn('[ApplicationService] Could not fetch past winners for comparison:', err.message);
+    }
 
-    // 2. Run Gemini Semantic Verification (will throw if GEMINI_API_KEY missing or models fail)
-    const aiResult = await verifyApplicationWithGemini(
-      {
-        title,
-        description,
-        category,
-        target_audience: applicationData.target_audience || applicationData.stage,
-        unique_value_prop: applicationData.unique_value_prop || applicationData.metrics?.[0]?.value,
-      },
-      pastWinners,
-      userPreviousSubmissions
-    );
+    let userPreviousSubmissions = [];
+    try {
+      userPreviousSubmissions = await this.getUserSubmissions(telegramIdStr);
+    } catch (err) {
+      console.warn('[ApplicationService] Could not fetch user past submissions:', err.message);
+    }
+
+    // 2. Run Gemini Semantic Verification with Safe Fallback to MANUAL_REVIEW
+    let aiResult;
+    try {
+      aiResult = await verifyApplicationWithGemini(
+        {
+          title,
+          description,
+          category,
+          target_audience: applicationData.target_audience || applicationData.stage,
+          unique_value_prop: applicationData.unique_value_prop || applicationData.metrics?.[0]?.value,
+        },
+        pastWinners,
+        userPreviousSubmissions
+      );
+    } catch (geminiError) {
+      console.warn('[ApplicationService] Gemini verification unavailable, routing to MANUAL_REVIEW:', geminiError.message);
+      aiResult = {
+        verdict: 'MANUAL_REVIEW',
+        similarity_score: 0,
+        confidence_score: 0,
+        rejection_reason: 'Сервис Gemini AI временно недоступен. Проект сохранен и направлен на ручную модерацию администратором Hub.',
+        model_name: config.gemini.model || 'gemini-1.5-flash',
+        raw_response: { error: geminiError.message, note: 'Service unavailable fallback to manual review' },
+        execution_time_ms: 0,
+        matched_entity_type: '',
+        matched_entity_id: '',
+        matched_entity_title: '',
+      };
+    }
 
     // Map AI verdict to status string
     let status = 'pending';

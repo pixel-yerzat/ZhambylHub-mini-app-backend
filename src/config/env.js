@@ -7,6 +7,7 @@ export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   corsOrigin: process.env.CORS_ORIGIN || '*',
+  adminSecretKey: process.env.ADMIN_SECRET_KEY || '',
   
   supabase: {
     url: process.env.SUPABASE_URL || '',

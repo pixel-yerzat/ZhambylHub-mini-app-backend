@@ -7,11 +7,19 @@ const updateStatusSchema = z.object({
   notes: z.string().optional(),
 });
 
-function checkAdminAuthorization(telegramUser) {
+function checkAdminAuthorization(reqOrUser) {
+  if (reqOrUser?.isAdmin) {
+    return { authorized: true };
+  }
+  const clientAdminKey = reqOrUser?.headers?.['x-admin-secret-key'];
+  if (config.adminSecretKey && clientAdminKey && clientAdminKey === config.adminSecretKey) {
+    return { authorized: true };
+  }
   if (!config.telegram.adminChatId) {
     return { authorized: false, reason: 'Функционал администратора недоступен: TELEGRAM_ADMIN_CHAT_ID не настроен.' };
   }
-  const userId = Number(telegramUser?.id);
+  const user = reqOrUser?.telegramUser || reqOrUser;
+  const userId = Number(user?.id);
   if (!userId || userId !== Number(config.telegram.adminChatId)) {
     return { authorized: false, reason: 'Доступ запрещен: требуются права администратора Hub.' };
   }
@@ -25,7 +33,7 @@ export class AdminController {
    */
   static async listApplications(req, res, next) {
     try {
-      const auth = checkAdminAuthorization(req.telegramUser);
+      const auth = checkAdminAuthorization(req);
       if (!auth.authorized) {
         return res.status(403).json({
           success: false,
@@ -52,7 +60,7 @@ export class AdminController {
    */
   static async updateStatus(req, res, next) {
     try {
-      const auth = checkAdminAuthorization(req.telegramUser);
+      const auth = checkAdminAuthorization(req);
       if (!auth.authorized) {
         return res.status(403).json({
           success: false,
