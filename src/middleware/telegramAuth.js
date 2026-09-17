@@ -10,7 +10,7 @@ import { config } from '../config/env.js';
  * @returns {{ isValid: boolean, user: object | null }}
  */
 export function verifyTelegramInitData(initData, botToken) {
-  if (!initData) {
+  if (!initData || !botToken) {
     return { isValid: false, user: null };
   }
 
@@ -55,65 +55,34 @@ export function verifyTelegramInitData(initData, botToken) {
 
 /**
  * Express Middleware to authenticate incoming requests from Telegram Mini App.
+ * Strictly verifies cryptographic HMAC signature using TELEGRAM_BOT_TOKEN.
+ * Does NOT generate fake/mock users or permit unauthenticated bypasses.
  */
 export function telegramAuthMiddleware(req, res, next) {
-  const initData = req.headers['x-telegram-init-data'] || req.query.initData || req.body?.initData;
   const botToken = config.telegram.botToken;
-
-  // 1. Check if user ID or payload user is directly provided (e.g. from Mini App frontend state, dev headers, or body)
-  const explicitUserId =
-    req.headers['x-telegram-user-id'] ||
-    req.body?.founder_id ||
-    req.body?.user_id ||
-    req.body?.telegram_id ||
-    req.query?.user_id;
-
-  if (explicitUserId) {
-    req.telegramUser = {
-      id: explicitUserId,
-      username: req.headers['x-telegram-username'] || req.body?.username || req.body?.telegram_username || 'user',
-      first_name: req.headers['x-telegram-first-name'] || req.body?.founder_name || req.body?.first_name || 'Участник',
-      last_name: req.headers['x-telegram-last-name'] || req.body?.last_name || '',
-    };
-    return next();
+  if (!botToken) {
+    return res.status(503).json({
+      success: false,
+      error: 'Telegram authentication service is unavailable: TELEGRAM_BOT_TOKEN is not configured.',
+    });
   }
 
-  // 2. If initData is provided, try validating with bot token or parse user payload
-  if (initData) {
-    if (botToken) {
-      const { isValid, user } = verifyTelegramInitData(initData, botToken);
-      if (isValid && user) {
-        req.telegramUser = user;
-        return next();
-      }
-    }
-
-    // Attempt to extract user JSON from initData URL params directly
-    try {
-      const urlParams = new URLSearchParams(initData);
-      const userJson = urlParams.get('user');
-      if (userJson) {
-        req.telegramUser = JSON.parse(userJson);
-        return next();
-      }
-    } catch (err) {
-      console.warn('[TelegramAuth] Failed to parse user from initData param:', err.message);
-    }
+  const initData = req.headers['x-telegram-init-data'] || req.query?.initData || req.body?.initData;
+  if (!initData) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: Missing x-telegram-init-data header.',
+    });
   }
 
-  // 3. Fallback for Web browser access without telegram wrapper
-  if (req.body?.name || req.body?.title || req.method === 'GET') {
-    req.telegramUser = {
-      id: req.body?.founder_id || req.body?.user_id || 'web_user_' + Date.now(),
-      username: req.body?.telegram_username || 'web_resident',
-      first_name: req.body?.founder_name || 'Веб Участник',
-      last_name: '',
-    };
-    return next();
+  const { isValid, user } = verifyTelegramInitData(initData, botToken);
+  if (!isValid || !user || !user.id) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: Invalid Telegram initData signature or missing user identity.',
+    });
   }
 
-  return res.status(401).json({
-    success: false,
-    error: 'Unauthorized: Missing x-telegram-init-data header or user identity',
-  });
+  req.telegramUser = user;
+  return next();
 }

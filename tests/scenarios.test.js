@@ -1,7 +1,10 @@
 import crypto from 'crypto';
+import { verifyTelegramInitData, telegramAuthMiddleware } from '../src/middleware/telegramAuth.js';
+import { verifyApplicationWithGemini } from '../src/services/geminiVerification.js';
 import { WinnerService } from '../src/services/winnerService.js';
 import { ApplicationService } from '../src/services/applicationService.js';
-import { verifyTelegramInitData } from '../src/middleware/telegramAuth.js';
+import { AdminController } from '../src/controllers/adminController.js';
+import { config } from '../src/config/env.js';
 
 // Color logging helpers
 const colors = {
@@ -10,7 +13,6 @@ const colors = {
   red: '\x1b[31m',
   yellow: '\x1b[33m',
   cyan: '\x1b[36m',
-  magenta: '\x1b[35m',
   bold: '\x1b[1m',
 };
 
@@ -34,182 +36,205 @@ function assert(condition, name, expected, actual) {
 }
 
 async function runAllScenarios() {
-  console.log(`\n${colors.bold}${colors.cyan}======================================================${colors.reset}`);
-  console.log(`${colors.bold}${colors.cyan}🧪 RUNNING HUB VERIFICATION SYSTEM SCENARIOS & TESTS 🧪${colors.reset}`);
-  console.log(`${colors.bold}${colors.cyan}======================================================${colors.reset}\n`);
-
-  const mockUser1 = { id: 1001, username: 'yerzat_dev', first_name: 'Yerzat' };
-  const mockUser2 = { id: 2002, username: 'alisher_hack', first_name: 'Alisher' };
-  const mockUser3 = { id: 3003, username: 'dina_start', first_name: 'Dina' };
+  console.log(`\n${colors.bold}${colors.cyan}===================================================================${colors.reset}`);
+  console.log(`${colors.bold}${colors.cyan}🧪 RUNNING STRICT EXTERNAL SERVICES & ANTI-MOCK VALIDATION TESTS 🧪${colors.reset}`);
+  console.log(`${colors.bold}${colors.cyan}===================================================================${colors.reset}\n`);
 
   // ----------------------------------------------------
-  // SCENARIO 1: First Original Project by User 1
+  // TEST 1: Telegram HMAC signature cryptographic verification
   // ----------------------------------------------------
-  console.log(`\n${colors.bold}👉 Сценарий 1: Первичная подача оригинального проекта (User 1)${colors.reset}`);
-  const app1 = await ApplicationService.submitApplication(
-    {
-      name: 'EduQuest VR (Обучение физике в виртуальной реальности)',
-      short_desc: 'Интерактивная образовательная VR-песочница для проведения лабораторных работ по физике и квантовой механике для старшеклассников.',
-      category: 'EdTech / VR',
-      target_audience: 'Школы и лицеи',
-      unique_value_prop: 'Физически точные симуляции без дорогостоящего оборудования',
-    },
-    mockUser1
-  );
-
-  assert(
-    app1.status.toLowerCase() === 'approved',
-    'Оригинальный проект должен быть успешно одобрен (approved)',
-    'approved',
-    app1.status
-  );
-
-  // ----------------------------------------------------
-  // SCENARIO 2: Same User Submitting a DIFFERENT Project
-  // ----------------------------------------------------
-  console.log(`\n${colors.bold}👉 Сценарий 2: Тот же автор (User 1) подает ВТОРОЙ, ДРУГОЙ проект${colors.reset}`);
-  const app2 = await ApplicationService.submitApplication(
-    {
-      name: 'EcoLogistics (Оптимизация маршрутов мусоровозов)',
-      short_desc: 'IoT-датчики наполняемости мусорных баков и алгоритм муравьиной колонии для динамического построения оптимальных маршрутов коммунальной техники.',
-      category: 'Smart City / CleanTech',
-      target_audience: 'Муниципальные службы и коммунальные предприятия',
-      unique_value_prop: 'Снижение расхода топлива спецтехники на 35%',
-    },
-    mockUser1
-  );
-
-  assert(
-    app2.status.toLowerCase() === 'approved',
-    'Второй РАЗНЫЙ проект того же автора должен быть одобрен (approved)',
-    'approved',
-    app2.status
-  );
-
-  // ----------------------------------------------------
-  // SCENARIO 3: Same User submitting a DUPLICATE of their own project
-  // ----------------------------------------------------
-  console.log(`\n${colors.bold}👉 Сценарий 3: Попытка подать ДУБЛИКАТ своего же проекта (User 1)${colors.reset}`);
-  const app3Duplicate = await ApplicationService.submitApplication(
-    {
-      name: 'EduQuest VR (Виртуальные лабораторные по физике)',
-      short_desc: 'Образовательная VR-песочница для проведения лабораторных работ по физике и механике для школьников.',
-      category: 'EdTech / VR',
-    },
-    mockUser1
-  );
-
-  assert(
-    app3Duplicate.status.toLowerCase() === 'rejected_duplicate',
-    'Дубликат собственной заявки должен быть отклонен (rejected_duplicate)',
-    'rejected_duplicate',
-    app3Duplicate.status
-  );
-  assert(
-    Boolean(app3Duplicate.rejection_reason),
-    'Должна быть указана понятная причина отклонения дубликата',
-    'Reason present',
-    app3Duplicate.rejection_reason
-  );
-
-  // ----------------------------------------------------
-  // SCENARIO 4: User 2 submits a clone of a PAST HUB WINNER
-  // ----------------------------------------------------
-  console.log(`\n${colors.bold}👉 Сценарий 4: Попытка подать проект, который УЖЕ ПОБЕЖДАЛ на Хабе (User 2)${colors.reset}`);
-  // In seed_winners: "Smart Parking Almaty"
-  const app4WinnerCopy = await ApplicationService.submitApplication(
-    {
-      name: 'Smart Parking Almaty (Умная парковка для города)',
-      short_desc: 'Система компьютерного зрения и IoT датчиков для автоматического поиска свободных мест на парковках через камеры RTSP и Telegram бот.',
-      category: 'Smart City / IoT',
-    },
-    mockUser2
-  );
-
-  assert(
-    app4WinnerCopy.status.toLowerCase() === 'rejected_past_winner',
-    'Проект-клон победителя должен быть отклонен (rejected_past_winner)',
-    'rejected_past_winner',
-    app4WinnerCopy.status
-  );
-  assert(
-    app4WinnerCopy.matched_entity_type === 'WINNING_PROJECT',
-    'Тип совпадения должен быть WINNING_PROJECT',
-    'WINNING_PROJECT',
-    app4WinnerCopy.matched_entity_type
-  );
-
-  // ----------------------------------------------------
-  // SCENARIO 5: Same domain as past winner, but DIFFERENT solution
-  // ----------------------------------------------------
-  console.log(`\n${colors.bold}👉 Сценарий 5: Схожая сфера (MedTech), но принципиально ДРУГОЕ решение (User 3)${colors.reset}`);
-  // Winner was "CardioGuard" (ECG heart monitoring)
-  // New application is "DentalAI 3D" (Dental scan for tooth cavities)
-  const app5DistinctMedTech = await ApplicationService.submitApplication(
-    {
-      name: 'DentalAI 3D (3D-скрининг кариеса по снимкам зубов)',
-      short_desc: 'Стоматологический ИИ-ассистент, анализирующий 3D-томографию челюсти и прицельные снимки зубов для автоматического обнаружения скрытого кариеса и патологий корней.',
-      category: 'MedTech / Dental',
-      target_audience: 'Стоматологические клиники',
-    },
-    mockUser3
-  );
-
-  assert(
-    app5DistinctMedTech.status.toLowerCase() === 'approved',
-    'Проект в той же сфере с уникальным решением должен быть одобрен (approved)',
-    'approved',
-    app5DistinctMedTech.status
-  );
-
-  // ----------------------------------------------------
-  // SCENARIO 6: Telegram HMAC Security Verification
-  // ----------------------------------------------------
-  console.log(`\n${colors.bold}👉 Сценарий 6: Проверка криптографической подписи Telegram initData${colors.reset}`);
-  const botToken = '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11';
+  console.log(`${colors.bold}👉 Тест 1: Криптографическая верификация подписи Telegram initData (HMAC-SHA256)${colors.reset}`);
+  const testBotToken = '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11';
   const rawParams = 'auth_date=1670000000\nquery_id=AAHdF6IQAAAAAN0XohDhrOrc\nuser={"id":987654321,"first_name":"TelegramUser"}';
-  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(testBotToken).digest();
   const validHash = crypto.createHmac('sha256', secretKey).update(rawParams).digest('hex');
 
   const validInitData = `auth_date=1670000000&query_id=AAHdF6IQAAAAAN0XohDhrOrc&user=${encodeURIComponent(
     JSON.stringify({ id: 987654321, first_name: 'TelegramUser' })
   )}&hash=${validHash}`;
 
-  const validAuthResult = verifyTelegramInitData(validInitData, botToken);
-  assert(validAuthResult.isValid === true, 'Подлинный initData должен быть валидирован (isValid: true)', true, validAuthResult.isValid);
-  assert(validAuthResult.user?.id === 987654321, 'Данные пользователя Telegram должны быть извлечены корректно', 987654321, validAuthResult.user?.id);
+  const validAuthResult = verifyTelegramInitData(validInitData, testBotToken);
+  assert(validAuthResult.isValid === true, 'Подлинный initData валидирован успешно', true, validAuthResult.isValid);
+  assert(validAuthResult.user?.id === 987654321, 'Данные пользователя извлечены из подписанного payload', 987654321, validAuthResult.user?.id);
 
   const fakeInitData = validInitData.replace(validHash, '0000000000000000000000000000000000000000000000000000000000000000');
-  const fakeAuthResult = verifyTelegramInitData(fakeInitData, botToken);
-  assert(fakeAuthResult.isValid === false, 'Поддельный initData должен быть отклонен (isValid: false)', false, fakeAuthResult.isValid);
+  const fakeAuthResult = verifyTelegramInitData(fakeInitData, testBotToken);
+  assert(fakeAuthResult.isValid === false, 'Поддельный хеш отклонен без исключений', false, fakeAuthResult.isValid);
+
+  const emptyResult = verifyTelegramInitData('', testBotToken);
+  assert(emptyResult.isValid === false, 'Пустой initData отклонен', false, emptyResult.isValid);
 
   // ----------------------------------------------------
-  // SCENARIO 7: Admin Manual Status Override
+  // TEST 2: Telegram Auth Middleware: No bot token -> 503 Service Unavailable
   // ----------------------------------------------------
-  console.log(`\n${colors.bold}👉 Сценарий 7: Ручная модерация администратором (Override Status)${colors.reset}`);
-  const overridden = await ApplicationService.updateApplicationStatus(
-    app3Duplicate.id,
-    'APPROVED',
-    999999,
-    'Ручное исключение от оргкомитета хакатона'
+  console.log(`\n${colors.bold}👉 Тест 2: Запрос к Telegram Auth без TELEGRAM_BOT_TOKEN -> 503 Service Unavailable${colors.reset}`);
+  const originalToken = config.telegram.botToken;
+  config.telegram.botToken = '';
+
+  let middlewareStatus = null;
+  let middlewareResponse = null;
+
+  const mockRes503 = {
+    status(code) {
+      middlewareStatus = code;
+      return {
+        json(data) {
+          middlewareResponse = data;
+        },
+      };
+    },
+  };
+
+  telegramAuthMiddleware({ headers: {} }, mockRes503, () => {});
+  assert(middlewareStatus === 503, 'При отсутствии TELEGRAM_BOT_TOKEN возвращается статус 503', 503, middlewareStatus);
+  assert(
+    middlewareResponse?.error?.includes('TELEGRAM_BOT_TOKEN is not configured'),
+    'Возвращается явное сообщение о не настроенном токене бота',
+    'contains token error message',
+    middlewareResponse?.error
   );
 
+  // ----------------------------------------------------
+  // TEST 3: Telegram Auth Middleware: Missing initData -> 401 Unauthorized (No fake user)
+  // ----------------------------------------------------
+  console.log(`\n${colors.bold}👉 Тест 3: Запрос без initData не должен создавать фейкового пользователя (401)${colors.reset}`);
+  config.telegram.botToken = testBotToken;
+
+  const mockReqNoAuth = {
+    headers: {},
+    body: { name: 'Direct Web Project', founder_name: 'Hacker' },
+    method: 'POST',
+  };
+
+  let unauthorizedStatus = null;
+  let unauthorizedResponse = null;
+
+  const mockRes401 = {
+    status(code) {
+      unauthorizedStatus = code;
+      return {
+        json(data) {
+          unauthorizedResponse = data;
+        },
+      };
+    },
+  };
+
+  telegramAuthMiddleware(mockReqNoAuth, mockRes401, () => {});
+  assert(unauthorizedStatus === 401, 'Запрос без initData отклоняется со статусом 401', 401, unauthorizedStatus);
+  assert(mockReqNoAuth.telegramUser === undefined, 'Фейковый пользователь НЕ создается', undefined, mockReqNoAuth.telegramUser);
+
+  // ----------------------------------------------------
+  // TEST 4: Gemini Verification: Missing API Key throws error (No fake fallback)
+  // ----------------------------------------------------
+  console.log(`\n${colors.bold}👉 Тест 4: Отсутствие GEMINI_API_KEY вызывает явную ошибку (без fallback эвристики)${colors.reset}`);
+  const originalGeminiKey = config.gemini.apiKey;
+  config.gemini.apiKey = '';
+
+  let geminiErrorThrown = false;
+  let geminiErrorMessage = '';
+
+  try {
+    await verifyApplicationWithGemini({
+      title: 'Test Project',
+      description: 'Test Description',
+      category: 'IT',
+    });
+  } catch (err) {
+    geminiErrorThrown = true;
+    geminiErrorMessage = err.message;
+  }
+
+  assert(geminiErrorThrown === true, 'При отсутствии GEMINI_API_KEY выбрасывается исключение', true, geminiErrorThrown);
   assert(
-    overridden.status === 'APPROVED',
-    'Администратор может вручную одобрить заявку (status: APPROVED)',
-    'APPROVED',
-    overridden.status
+    geminiErrorMessage.includes('GEMINI_API_KEY is missing'),
+    'Исключение явно сообщает об отсутствии GEMINI_API_KEY',
+    'contains GEMINI_API_KEY is missing',
+    geminiErrorMessage
   );
+  config.gemini.apiKey = originalGeminiKey;
+
+  // ----------------------------------------------------
+  // TEST 5: Supabase: WinnerService throws error when Supabase is unconfigured (No memory fallback)
+  // ----------------------------------------------------
+  console.log(`\n${colors.bold}👉 Тест 5: WinnerService выбрасывает ошибку при отсутствии Supabase (без memory fallback)${colors.reset}`);
+  let winnerDbErrorThrown = false;
+  let winnerDbErrorMessage = '';
+
+  try {
+    await WinnerService.getAllWinners();
+  } catch (err) {
+    winnerDbErrorThrown = true;
+    winnerDbErrorMessage = err.message;
+  }
+
+  assert(winnerDbErrorThrown === true, 'WinnerService.getAllWinners() выбрасывает исключение без Supabase', true, winnerDbErrorThrown);
   assert(
-    overridden.reviewed_by === 999999,
-    'ID админа должен быть зафиксирован в аудите',
-    999999,
-    overridden.reviewed_by
+    winnerDbErrorMessage.includes('Database service is not configured') || winnerDbErrorMessage.includes('Failed to fetch'),
+    'Ошибка указывает на проблему подключения к БД',
+    'database error',
+    winnerDbErrorMessage
   );
 
-  console.log(`\n${colors.bold}${colors.green}======================================================${colors.reset}`);
-  console.log(`${colors.bold}${colors.green}🎉 ВСЕ СЦЕНАРИИ И ПРОВЕРКИ УСПЕШНО ПРОЙДЕНЫ! 🎉${colors.reset}`);
-  console.log(`${colors.bold}${colors.green}======================================================${colors.reset}\n`);
+  // ----------------------------------------------------
+  // TEST 6: Supabase: ApplicationService throws error when Supabase is unconfigured (No memory fallback)
+  // ----------------------------------------------------
+  console.log(`\n${colors.bold}👉 Тест 6: ApplicationService выбрасывает ошибку при отсутствии Supabase${colors.reset}`);
+  let appDbErrorThrown = false;
+  let appDbErrorMessage = '';
+
+  try {
+    await ApplicationService.getUserSubmissions('12345');
+  } catch (err) {
+    appDbErrorThrown = true;
+    appDbErrorMessage = err.message;
+  }
+
+  assert(appDbErrorThrown === true, 'ApplicationService.getUserSubmissions() выбрасывает исключение без Supabase', true, appDbErrorThrown);
+  assert(
+    appDbErrorMessage.includes('Database service is not configured') || appDbErrorMessage.includes('Failed to fetch'),
+    'Ошибка указывает на проблему подключения к БД',
+    'database error',
+    appDbErrorMessage
+  );
+
+  // ----------------------------------------------------
+  // TEST 7: Admin Controller: Strict admin authorization (No open access if adminChatId unconfigured)
+  // ----------------------------------------------------
+  console.log(`\n${colors.bold}👉 Тест 7: AdminController строго закрыт, если TELEGRAM_ADMIN_CHAT_ID не задан${colors.reset}`);
+  const originalAdminId = config.telegram.adminChatId;
+  config.telegram.adminChatId = null;
+
+  let adminStatus = null;
+  let adminResponse = null;
+
+  const mockAdminRes = {
+    status(code) {
+      adminStatus = code;
+      return {
+        json(data) {
+          adminResponse = data;
+        },
+      };
+    },
+  };
+
+  await AdminController.listApplications({ telegramUser: { id: 12345 } }, mockAdminRes, () => {});
+  assert(adminStatus === 403, 'Доступ к админке запрещен при незаданном TELEGRAM_ADMIN_CHAT_ID', 403, adminStatus);
+  assert(
+    adminResponse?.error?.includes('TELEGRAM_ADMIN_CHAT_ID не настроен'),
+    'Возвращается понятное сообщение о ненастроенном админском доступе',
+    'TELEGRAM_ADMIN_CHAT_ID не настроен',
+    adminResponse?.error
+  );
+
+  // Restore configs
+  config.telegram.botToken = originalToken;
+  config.telegram.adminChatId = originalAdminId;
+
+  console.log(`\n${colors.bold}${colors.green}===================================================================${colors.reset}`);
+  console.log(`${colors.bold}${colors.green}🎉 ВСЕ СТРОГИЕ ПРОВЕРКИ И ТЕСТЫ БЕЗ МОКОВ УСПЕШНО ПРОЙДЕНЫ! 🎉${colors.reset}`);
+  console.log(`${colors.bold}${colors.green}===================================================================${colors.reset}\n`);
 }
 
 runAllScenarios().catch((err) => {

@@ -40,10 +40,8 @@ export async function verifyApplicationWithGemini(
   const startTime = Date.now();
   const client = getGeminiClient();
 
-  // If Gemini client is not initialized, run heuristic fallback
-  if (!client || !config.gemini.apiKey) {
-    console.warn('[GeminiVerification] No Gemini API key configured. Executing fallback heuristic verification.');
-    return fallbackHeuristicVerification(newApplication, pastWinners, userPreviousSubmissions, startTime);
+  if (!config.gemini.apiKey || !client) {
+    throw new Error('Gemini AI verification service is not configured: GEMINI_API_KEY is missing.');
   }
 
   const prompt = `
@@ -112,6 +110,7 @@ ${
 
   // Remove duplicates
   const uniqueModels = Array.from(new Set(candidateModels));
+  let lastError = null;
 
   for (const modelName of uniqueModels) {
     try {
@@ -160,127 +159,10 @@ ${
         model_name: modelName,
       };
     } catch (error) {
+      lastError = error;
       console.warn(`[GeminiVerification] Model "${modelName}" failed: ${error.message}. Trying next candidate...`);
     }
   }
 
-  // If all Gemini models fail, run heuristic fallback so user submission is never dropped
-  console.warn('[GeminiVerification] All Gemini models failed or returned error. Running semantic heuristic fallback.');
-  return fallbackHeuristicVerification(newApplication, pastWinners, userPreviousSubmissions, startTime);
-}
-
-/**
- * Heuristic Local Verification Fallback (Used when Gemini API Key is not set or offline).
- * Performs text token overlap and similarity checks.
- */
-function fallbackHeuristicVerification(newApp, pastWinners, userSubmissions, startTime) {
-  const normalize = (str) =>
-    (str || '')
-      .toLowerCase()
-      .replace(/[^a-zа-я0-9\s]/gi, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length > 2);
-
-  const setA = new Set([...normalize(newApp.title), ...normalize(newApp.description)]);
-  const titleWordsA = new Set(normalize(newApp.title));
-
-  const calcSimilarity = (title, desc) => {
-    const setB = new Set([...normalize(title), ...normalize(desc)]);
-    const titleWordsB = new Set(normalize(title));
-
-    if (setA.size === 0 || setB.size === 0) return 0;
-
-    // 1. Text token intersection (Jaccard similarity)
-    let intersection = 0;
-    for (const w of setA) {
-      if (setB.has(w)) intersection++;
-    }
-    const union = new Set([...setA, ...setB]).size;
-    const jaccard = (intersection / union) * 100;
-    const overlapMin = (intersection / Math.min(setA.size, setB.size)) * 100;
-
-    // 2. Title similarity
-    let titleIntersection = 0;
-    for (const w of titleWordsA) {
-      if (titleWordsB.has(w)) titleIntersection++;
-    }
-    const titleSim = titleWordsA.size > 0 && titleWordsB.size > 0
-      ? (titleIntersection / Math.min(titleWordsA.size, titleWordsB.size)) * 100
-      : 0;
-
-    // Weighted similarity score
-    const combinedScore = Math.round(
-      Math.max(jaccard * 1.5, overlapMin * 0.8, titleSim >= 75 ? 85 : 0)
-    );
-
-    return Math.min(combinedScore, 100);
-  };
-
-  // 1. Check user own duplicates
-  for (const prev of userSubmissions) {
-    const sim = calcSimilarity(prev.title, prev.description);
-    if (sim >= 60 || prev.title.trim().toLowerCase() === newApp.title.trim().toLowerCase()) {
-      return {
-        success: true,
-        verdict: 'REJECTED_DUPLICATE',
-        similarity_score: Math.max(sim, 85),
-        confidence_score: 90,
-        matched_entity_type: 'OWN_PREVIOUS_SUBMISSION',
-        matched_entity_id: prev.id,
-        matched_entity_title: prev.title,
-        rejection_reason: `Вы уже подавали похожий проект "${prev.title}". Один и тот же проект нельзя подавать дважды.`,
-        detailed_analysis: {
-          core_idea_analysis: 'Обнаружено высокое совпадение с вашей ранее поданной заявкой.',
-          why_verdict: 'Дубликат собственной заявки.',
-        },
-        raw_response: { fallback: true },
-        execution_time_ms: Date.now() - startTime,
-        model_name: 'heuristic-local-engine',
-      };
-    }
-  }
-
-  // 2. Check past winners
-  for (const winner of pastWinners) {
-    const sim = calcSimilarity(winner.title, winner.description);
-    if (sim >= 60 || winner.title.trim().toLowerCase() === newApp.title.trim().toLowerCase()) {
-      return {
-        success: true,
-        verdict: 'REJECTED_PAST_WINNER',
-        similarity_score: Math.max(sim, 85),
-        confidence_score: 90,
-        matched_entity_type: 'WINNING_PROJECT',
-        matched_entity_id: winner.id,
-        matched_entity_title: winner.title,
-        rejection_reason: `Проект имеет критическое сходство с проектом-победителем "${winner.title}" (${winner.event_name}). Ранее побеждавшие проекты не допускаются к участию.`,
-        detailed_analysis: {
-          core_idea_analysis: `Идея повторяет проект-победитель "${winner.title}".`,
-          why_verdict: 'Плагиат или повторная подача победившего проекта.',
-        },
-        raw_response: { fallback: true },
-        execution_time_ms: Date.now() - startTime,
-        model_name: 'heuristic-local-engine',
-      };
-    }
-  }
-
-  // Otherwise APPROVED
-  return {
-    success: true,
-    verdict: 'APPROVED',
-    similarity_score: 15,
-    confidence_score: 85,
-    matched_entity_type: 'NONE',
-    matched_entity_id: null,
-    matched_entity_title: null,
-    rejection_reason: null,
-    detailed_analysis: {
-      core_idea_analysis: 'Проект оригинален и не нарушает правила Хаба.',
-      novelty_points: ['Новая архитектура решения', 'Самостоятельная концепция'],
-      why_verdict: 'Проект прошел все проверки.',
-    },
-    raw_response: { fallback: true },
-    execution_time_ms: Date.now() - startTime,
-    model_name: 'heuristic-local-engine',
-  };
+  throw new Error(`All Gemini models failed to verify the application: ${lastError ? lastError.message : 'Unknown error'}`);
 }

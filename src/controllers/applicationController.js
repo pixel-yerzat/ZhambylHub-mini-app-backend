@@ -71,11 +71,13 @@ export class ApplicationController {
         demo_url: bodyData.demo_url || bodyData.demo_link || bodyData.demo_or_github_url || null,
       };
 
-      const telegramUser = req.telegramUser || {
-        id: bodyData.founder_id || 'web_user_' + Date.now(),
-        first_name: bodyData.founder_name || 'Участник',
-        username: 'user',
-      };
+      const telegramUser = req.telegramUser;
+      if (!telegramUser || !telegramUser.id) {
+        return res.status(401).json({
+          success: false,
+          error: 'Unauthorized: Valid Telegram authentication is required.',
+        });
+      }
 
       const application = await ApplicationService.submitApplication(normalizedPayload, telegramUser);
 

@@ -7,10 +7,15 @@ const updateStatusSchema = z.object({
   notes: z.string().optional(),
 });
 
-function isAuthorizedAdmin(telegramUser) {
-  if (!config.telegram.adminChatId) return true; // Development mode / open if unconfigured
+function checkAdminAuthorization(telegramUser) {
+  if (!config.telegram.adminChatId) {
+    return { authorized: false, reason: 'Функционал администратора недоступен: TELEGRAM_ADMIN_CHAT_ID не настроен.' };
+  }
   const userId = Number(telegramUser?.id);
-  return userId && userId === Number(config.telegram.adminChatId);
+  if (!userId || userId !== Number(config.telegram.adminChatId)) {
+    return { authorized: false, reason: 'Доступ запрещен: требуются права администратора Hub.' };
+  }
+  return { authorized: true };
 }
 
 export class AdminController {
@@ -20,10 +25,11 @@ export class AdminController {
    */
   static async listApplications(req, res, next) {
     try {
-      if (!isAuthorizedAdmin(req.telegramUser)) {
+      const auth = checkAdminAuthorization(req.telegramUser);
+      if (!auth.authorized) {
         return res.status(403).json({
           success: false,
-          error: 'Доступ запрещен: требуются права администратора Hub',
+          error: auth.reason,
         });
       }
 
@@ -46,10 +52,11 @@ export class AdminController {
    */
   static async updateStatus(req, res, next) {
     try {
-      if (!isAuthorizedAdmin(req.telegramUser)) {
+      const auth = checkAdminAuthorization(req.telegramUser);
+      if (!auth.authorized) {
         return res.status(403).json({
           success: false,
-          error: 'Доступ запрещен: требуются права администратора Hub',
+          error: auth.reason,
         });
       }
       const { id } = req.params;

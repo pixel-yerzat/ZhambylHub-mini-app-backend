@@ -23,7 +23,6 @@ export function setBotInstance(instance) {
 export async function sendApplicationStatusNotification(telegramId, application) {
   const bot = getBot();
   if (!bot || !telegramId) {
-    console.log(`[TelegramBotService Mock] Notification for user ${telegramId}: Status = ${application.status}`);
     return;
   }
 
@@ -90,7 +89,6 @@ export async function sendAdminReviewAlert(application) {
   const adminChatId = config.telegram.adminChatId;
 
   if (!bot || !adminChatId) {
-    console.log(`[TelegramBotService Admin Alert Mock] Application ${application.id} requires manual review.`);
     return;
   }
 

@@ -36,13 +36,13 @@ export const config = {
 export function validateEnv() {
   const warnings = [];
   if (!config.supabase.url || !config.supabase.key) {
-    warnings.push('⚠️  SUPABASE_URL or SUPABASE_KEY is not set. Database operations will use fallback/mock mode if Supabase is offline.');
+    warnings.push('⚠️  SUPABASE_URL or SUPABASE_KEY is not set. Database operations will be unavailable.');
   }
   if (!config.gemini.apiKey) {
-    warnings.push('⚠️  GEMINI_API_KEY is not set. Gemini AI verification will require an API key in production.');
+    warnings.push('⚠️  GEMINI_API_KEY is not set. Gemini AI verification service will be unavailable.');
   }
   if (!config.telegram.botToken) {
-    warnings.push('⚠️  TELEGRAM_BOT_TOKEN is not set. Telegram Bot alerts and initData HMAC validation will run in development bypass mode.');
+    warnings.push('⚠️  TELEGRAM_BOT_TOKEN is not set. Telegram Bot and Telegram authentication will be unavailable.');
   }
   
   if (warnings.length > 0) {
